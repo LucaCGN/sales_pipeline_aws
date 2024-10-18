@@ -1,0 +1,39 @@
+# ---------------------------
+# Python virtual environments
+# ---------------------------
+
+# Common virtual environment directories
+venv/
+.env/
+ENV/
+env/
+.venv/
+
+# ---------------------------
+# Python cache directories
+# ---------------------------
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---------------------------
+# Optional: IDE and Editor Settings
+# ---------------------------
+
+# VS Code settings
+.vscode/
+
+# PyCharm settings
+.idea/
+
+# ---------------------------
+# Optional: OS Generated Files
+# ---------------------------
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db

@@ -8,6 +8,8 @@ import shutil
 import numpy as np
 import sys
 from datetime import datetime
+
+# Append the parent directory to the system path to allow absolute imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.config import config  # Correct absolute import
 
@@ -24,6 +26,58 @@ except Exception as e:
 S3_BUCKET_PATH = config.BUCKET_PATH          # Emulates AWS S3 Bucket
 RDS_PATH = config.DATABASE_PATH              # Emulates AWS RDS
 TEMP_PATH = config.TEMP_DATA_PATH            # For intermediate data files
+
+class DatabaseTarget(luigi.Target):
+    """
+    Custom Luigi Target that uses a SQLite database to track task completion.
+    
+    Parameters:
+    - task_name: A unique identifier for the task.
+    """
+
+    def __init__(self, task_name):
+        self.task_name = task_name
+        self.database_path = RDS_PATH  # Using the same RDS_PATH for simplicity
+        self._ensure_table_exists()
+
+    def _ensure_table_exists(self):
+        """
+        Ensures that the luigi_task_status table exists in the database.
+        """
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS luigi_task_status (
+                task_name TEXT PRIMARY KEY,
+                completed_at TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def exists(self):
+        """
+        Checks if the task has been completed by querying the database.
+        """
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT 1 FROM luigi_task_status WHERE task_name = ?', (self.task_name,))
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+
+    def touch(self):
+        """
+        Marks the task as completed by inserting a record into the database.
+        """
+        conn = sqlite3.connect(self.database_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO luigi_task_status (task_name, completed_at)
+            VALUES (?, ?)
+        ''', (self.task_name, datetime.utcnow().isoformat()))
+        conn.commit()
+        conn.close()
 
 class ExtractData(luigi.Task):
     """
@@ -43,9 +97,9 @@ class ExtractData(luigi.Task):
         Defines the output target for the extracted data.
 
         Returns:
-        - Luigi LocalTarget pointing to the extracted CSV file in the 'temp_data' directory.
+        - DatabaseTarget indicating the ExtractData task for this filename is complete.
         """
-        return luigi.LocalTarget(os.path.join(TEMP_PATH, f'extracted_{self.filename}'))
+        return DatabaseTarget(task_name=f'ExtractData_{self.filename}')
 
     def run(self):
         """
@@ -94,9 +148,13 @@ class ExtractData(luigi.Task):
             raise e
 
         # Save the extracted data
-        df.to_csv(self.output().path, index=False)
-        config.pipeline_logger.info(f"Saved extracted data for {self.filename} to {self.output().path}.")
+        extracted_file_path = os.path.join(TEMP_PATH, f'extracted_{self.filename}')
+        df.to_csv(extracted_file_path, index=False)
+        config.pipeline_logger.info(f"Saved extracted data for {self.filename} to {extracted_file_path}.")
 
+        # Mark the task as complete in the database
+        self.output().touch()
+        config.pipeline_logger.info(f"Extraction marked complete for {self.filename}.")
 
 class TransformData(luigi.Task):
     """
@@ -123,9 +181,9 @@ class TransformData(luigi.Task):
         Defines the output target for the transformed data.
 
         Returns:
-        - Luigi LocalTarget pointing to the transformed CSV file in the 'temp_data' directory.
+        - DatabaseTarget indicating the TransformData task for this filename is complete.
         """
-        return luigi.LocalTarget(os.path.join(TEMP_PATH, f'transformed_{self.filename}'))
+        return DatabaseTarget(task_name=f'TransformData_{self.filename}')
 
     def run(self):
         """
@@ -140,7 +198,8 @@ class TransformData(luigi.Task):
         - Saves the transformed data to the 'temp_data' directory.
         """
         config.pipeline_logger.info(f"Starting transformation for {self.filename}")
-        df = pd.read_csv(self.input().path, dtype=str)
+        extracted_file_path = os.path.join(TEMP_PATH, f'extracted_{self.filename}')
+        df = pd.read_csv(extracted_file_path, dtype=str)
 
         # Normalize decimal separators in 'price' and 'quantity' columns
         for col in ['price', 'quantity']:
@@ -199,9 +258,13 @@ class TransformData(luigi.Task):
             df['order_date'] = df['order_date'].fillna(pd.Timestamp.today())
 
         # Save transformed data
-        df.to_csv(self.output().path, index=False)
-        config.pipeline_logger.info(f"Saved transformed data for {self.filename} to {self.output().path}.")
+        transformed_file_path = os.path.join(TEMP_PATH, f'transformed_{self.filename}')
+        df.to_csv(transformed_file_path, index=False)
+        config.pipeline_logger.info(f"Saved transformed data for {self.filename} to {transformed_file_path}.")
 
+        # Mark the task as complete in the database
+        self.output().touch()
+        config.pipeline_logger.info(f"Transformation marked complete for {self.filename}.")
 
 class LoadData(luigi.Task):
     """
@@ -225,12 +288,12 @@ class LoadData(luigi.Task):
 
     def output(self):
         """
-        Dummy output to satisfy Luigi's requirement.
+        Defines the output target for the LoadData task.
 
         Returns:
-        - Luigi LocalTarget pointing to a marker file indicating the data load is complete.
+        - DatabaseTarget indicating the LoadData task for this filename is complete.
         """
-        return luigi.LocalTarget(os.path.join(TEMP_PATH, f'load_complete_{self.filename}'))
+        return DatabaseTarget(task_name=f'LoadData_{self.filename}')
 
     def run(self):
         """
@@ -240,10 +303,11 @@ class LoadData(luigi.Task):
         - Connects to the database.
         - Iterates over the transformed data and performs upsert operations.
         - Logs insertions and updates.
-        - Creates an output marker file upon successful completion.
+        - Marks the task as complete in the database upon successful completion.
         """
         config.pipeline_logger.info(f"Starting data load for {self.filename}")
-        df = pd.read_csv(self.input().path)
+        transformed_file_path = os.path.join(TEMP_PATH, f'transformed_{self.filename}')
+        df = pd.read_csv(transformed_file_path)
 
         # Connect to the database
         conn = sqlite3.connect(RDS_PATH)
@@ -285,11 +349,9 @@ class LoadData(luigi.Task):
         finally:
             conn.close()
 
-        # Create the output marker file
-        with self.output().open('w') as f:
-            f.write('Data load complete.')
+        # Mark the task as complete in the database
+        self.output().touch()
         config.pipeline_logger.info(f"Data load marked complete for {self.filename}.")
-
 
 class CleanupTempData(luigi.Task):
     """
@@ -312,13 +374,12 @@ class CleanupTempData(luigi.Task):
 
     def output(self):
         """
-        Marker file indicating cleanup is done.
+        Defines the output target for the CleanupTempData task.
 
         Returns:
-        - Luigi LocalTarget pointing to a marker file indicating the cleanup is complete.
+        - DatabaseTarget indicating the CleanupTempData task is complete.
         """
-        # Place the marker file in the logs directory to avoid being deleted
-        return luigi.LocalTarget(os.path.join(config.LOGS_PATH, 'cleanup_complete.txt'))
+        return DatabaseTarget(task_name='CleanupTempData')
 
     def run(self):
         """
@@ -327,7 +388,7 @@ class CleanupTempData(luigi.Task):
         Steps:
         - Deletes the 'temp_data' directory and all its files.
         - Logs the cleanup process.
-        - Creates a marker file upon successful cleanup.
+        - Marks the task as complete in the database upon successful cleanup.
         """
         config.pipeline_logger.info("Starting cleanup of temporary data.")
         try:
@@ -337,11 +398,9 @@ class CleanupTempData(luigi.Task):
             config.pipeline_logger.error(f"Failed to clean up temp directory: {e}")
             raise e
 
-        # Create the output marker file in the logs directory
-        with self.output().open('w') as f:
-            f.write('Temp data cleanup complete.')
+        # Mark the task as complete in the database
+        self.output().touch()
         config.pipeline_logger.info("Temporary data cleanup marked as complete.")
-
 
 class RunPipeline(luigi.Task):
     """
@@ -359,13 +418,12 @@ class RunPipeline(luigi.Task):
 
     def output(self):
         """
-        Marker file indicating the entire pipeline has run.
+        Defines the output target for the RunPipeline task.
 
         Returns:
-        - Luigi LocalTarget pointing to a marker file indicating the pipeline run is complete.
+        - DatabaseTarget indicating the RunPipeline task is complete.
         """
-        # Since TEMP_PATH has been removed by CleanupTempData, place the marker in the logs directory
-        return luigi.LocalTarget(os.path.join(config.LOGS_PATH, 'pipeline_run_complete.txt'))
+        return DatabaseTarget(task_name='RunPipeline')
 
     def run(self):
         """
@@ -373,17 +431,17 @@ class RunPipeline(luigi.Task):
 
         Steps:
         - Logs the completion of the pipeline.
-        - Creates a marker file indicating the pipeline run is complete.
+        - Marks the task as complete in the database.
         """
         config.pipeline_logger.info("Pipeline execution complete.")
-        with self.output().open('w') as f:
-            f.write('Pipeline run complete.')
-        config.pipeline_logger.info("Pipeline run marked as complete.")
 
+        # Mark the task as complete in the database
+        self.output().touch()
+        config.pipeline_logger.info("Pipeline run marked as complete.")
 
 class FinalCleanup(luigi.Task):
     """
-    Task to perform final cleanup by removing all marker files after the pipeline completes.
+    Task to perform final cleanup by removing all task status records after the pipeline completes.
 
     Dependencies:
     - This task depends on the completion of the RunPipeline task.
@@ -397,45 +455,47 @@ class FinalCleanup(luigi.Task):
 
     def output(self):
         """
-        Marker file indicating final cleanup is done.
+        Defines the output target for the FinalCleanup task.
 
         Returns:
-        - Luigi LocalTarget pointing to a marker file indicating the final cleanup is complete.
+        - DatabaseTarget indicating the FinalCleanup task is complete.
         """
-        # return luigi.LocalTarget(os.path.join(config.LOGS_PATH, 'final_cleanup_complete.txt'))
+        return DatabaseTarget(task_name='FinalCleanup')
 
     def run(self):
         """
-        Removes the specified marker files.
+        Removes task status records from the database to clean up.
 
         Steps:
-        - Deletes 'pipeline_run_complete.txt' from the logs directory.
-        - Deletes 'cleanup_complete.txt' from the logs directory.
+        - Deletes specific task records from the luigi_task_status table.
         - Logs the final cleanup process.
-        - Creates a final cleanup marker file.
+        - Marks the task as complete in the database upon successful cleanup.
         """
-        config.pipeline_logger.info("Starting final cleanup of marker files.")
+        config.pipeline_logger.info("Starting final cleanup of task status records.")
         try:
-            # Remove the pipeline run complete marker file
-            pipeline_marker = os.path.join(config.LOGS_PATH, 'pipeline_run_complete.txt')
-            if os.path.exists(pipeline_marker):
-                os.remove(pipeline_marker)
-                config.pipeline_logger.info(f"Removed marker file: {pipeline_marker}")
-
-            # Remove the cleanup complete marker file
-            cleanup_marker = os.path.join(config.LOGS_PATH, 'cleanup_complete.txt')
-            if os.path.exists(cleanup_marker):
-                os.remove(cleanup_marker)
-                config.pipeline_logger.info(f"Removed marker file: {cleanup_marker}")
+            conn = sqlite3.connect(RDS_PATH)
+            cursor = conn.cursor()
+            # Define the tasks to remove from the status table
+            tasks_to_remove = [
+                'RunPipeline',
+                'CleanupTempData',
+                'FinalCleanup',
+                'CompletePipeline'
+                # Add other task names if necessary
+            ]
+            for task_name in tasks_to_remove:
+                cursor.execute('DELETE FROM luigi_task_status WHERE task_name = ?', (task_name,))
+                config.pipeline_logger.info(f"Removed task status for: {task_name}")
+            conn.commit()
         except Exception as e:
             config.pipeline_logger.error(f"Failed during final cleanup: {e}")
             raise e
+        finally:
+            conn.close()
 
-        # Create the output marker file indicating final cleanup is complete
-        with self.output().open('w') as f:
-            f.write('Final cleanup complete.')
+        # Mark the task as complete in the database
+        self.output().touch()
         config.pipeline_logger.info("Final cleanup marked as complete.")
-
 
 class CompletePipeline(luigi.Task):
     """
@@ -453,12 +513,12 @@ class CompletePipeline(luigi.Task):
 
     def output(self):
         """
-        Marker file indicating the entire pipeline and final cleanup is complete.
+        Defines the output target for the CompletePipeline task.
 
         Returns:
-        - Luigi LocalTarget pointing to a marker file indicating the complete pipeline run is done.
+        - DatabaseTarget indicating the CompletePipeline task is complete.
         """
-        # return luigi.LocalTarget(os.path.join(config.LOGS_PATH, 'complete_pipeline_run.txt'))
+        return DatabaseTarget(task_name='CompletePipeline')
 
     def run(self):
         """
@@ -466,13 +526,13 @@ class CompletePipeline(luigi.Task):
 
         Steps:
         - Logs the completion.
-        - Creates a final marker file indicating everything is complete.
+        - Marks the task as complete in the database.
         """
         config.pipeline_logger.info("Entire pipeline and final cleanup complete.")
-        with self.output().open('w') as f:
-            f.write('Complete pipeline run and cleanup.')
-        config.pipeline_logger.info("Complete pipeline run marked as complete.")
 
+        # Mark the task as complete in the database
+        self.output().touch()
+        config.pipeline_logger.info("Complete pipeline run marked as complete.")
 
 if __name__ == '__main__':
     # Run the pipeline using Luigi's build function
