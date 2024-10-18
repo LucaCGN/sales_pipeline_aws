@@ -94,8 +94,8 @@ This deliberate complexity demonstrates the pipeline's resilience and the attent
 1. **Clone the Repository**
 
    ```bash
-   git clone https://github.com/yourusername/your-repo-name.git
-   cd your-repo-name
+   git clone https://github.com/LucaCGN/sales_pipeline_aws.git
+   cd sales_pipeline_aws
    ```
 
 2. **Create a Virtual Environment (Recommended)**
