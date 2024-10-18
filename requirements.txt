@@ -1,5 +1,27 @@
-fastapi
-uvicorn
-luigi
-pandas
-Jinja2
+# FastAPI web framework for building APIs and web dashboards
+fastapi==0.95.0
+
+# Uvicorn ASGI server to run FastAPI applications
+uvicorn==0.22.0
+
+# Luigi for pipeline orchestration and task management
+luigi==3.0.3
+
+# Pandas for data manipulation and analysis
+pandas==1.5.3
+
+# Jinja2 templating engine for rendering HTML templates in FastAPI
+jinja2==3.1.2
+
+# NumPy for numerical operations and data processing
+numpy==1.24.3
+
+# OpenAI API for integrating AI-powered insights
+openai==0.27.4
+
+# python-multipart for handling file uploads in FastAPI
+python-multipart==0.0.5
+
+# Requests library for making HTTP requests (required by OpenAI)
+requests==2.31.0
+
