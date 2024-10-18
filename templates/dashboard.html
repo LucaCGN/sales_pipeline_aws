@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sales Dashboard</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Marked.js for Markdown Parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- DOMPurify for Sanitizing HTML -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@2.3.10/dist/purify.min.js"></script>
+    <style>
+        body {
+            padding-top: 60px;
+            background-color: #f8f9fa;
+        }
+        /* Uniform Chart Container */
+        .chart-container {
+            position: relative;
+            margin: auto;
+            height: 30vh; /* Set to match the current pie chart's height */
+            width: 100%;
+        }
+        .chart-card {
+            height: 100%;
+        }
+        .chart-card .card-body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        /* Optional: Styling for Markdown Content */
+        #quickInsightsContent h2, 
+        #quickInsightsContent h3, 
+        #quickInsightsContent h4 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+        }
+        #quickInsightsContent ul {
+            list-style-type: disc;
+            padding-left: 20px;
+        }
+        #quickInsightsContent p {
+            margin-bottom: 1em;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Sales Dashboard</a>
+            <!-- Quick Insights Button -->
+            <button class="btn btn-outline-light ms-auto" id="quickInsightsBtn">Quick Insights</button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container-fluid">
+        <h1 class="mb-4 text-center">Sales Insights</h1>
+
+        <!-- Row 1: Customer Dashboards -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card shadow-sm chart-card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="my-0">Top 5 Customers by Revenue</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="topCustomersChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card shadow-sm chart-card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="my-0">Top 5 Customers by Quantity Purchased</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="topCustomersByQuantityChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 2: Product Dashboards -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card shadow-sm chart-card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="my-0">Top 5 Best-Selling Products</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="topProductsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card shadow-sm chart-card">
+                    <div class="card-header bg-secondary text-white">
+                        <h5 class="my-0">Top 5 Products by Revenue</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="topProductsByRevenueChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 3: Monthly Revenue Chart -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="my-0">Monthly Revenue</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="monthlyRevenueChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Insights Modal -->
+    <div class="modal fade" id="quickInsightsModal" tabindex="-1" aria-labelledby="quickInsightsModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="quickInsightsModalLabel">Quick Insights</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <!-- Loading Spinner -->
+            <div id="quickInsightsLoading" class="d-flex justify-content-center my-4">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+            <!-- Insights Content -->
+            <div id="quickInsightsContent" class="d-none"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle (includes Popper) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Custom JavaScript for Charts and Modal -->
+    <script>
+        // Function to fetch and render Top Customers by Revenue Chart
+        async function renderTopCustomersChart() {
+            try {
+                console.log("Fetching Top Customers by Revenue...");
+                const response = await fetch('/api/top-customers/');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                const labels = data.map(item => `Customer ${item.customer_id}`);
+                const revenues = data.map(item => item.total_revenue);
+
+                const ctx = document.getElementById('topCustomersChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Total Revenue ($)',
+                            data: revenues,
+                            backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false, // Ensures the chart fits the container
+                        plugins: {
+                            legend: { display: false },
+                            title: {
+                                display: true,
+                                text: 'Top 5 Customers by Revenue'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+                console.log("Top Customers by Revenue Chart rendered successfully.");
+            } catch (error) {
+                console.error("Error rendering Top Customers by Revenue Chart:", error);
+            }
+        }
+
+        // Function to fetch and render Top Customers by Quantity Chart
+        async function renderTopCustomersByQuantityChart() {
+            try {
+                console.log("Fetching Top Customers by Quantity Purchased...");
+                const response = await fetch('/api/top-customers-by-quantity/');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                const labels = data.map(item => `Customer ${item.customer_id}`);
+                const quantities = data.map(item => item.total_quantity_purchased);
+
+                const ctx = document.getElementById('topCustomersByQuantityChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Total Quantity Purchased',
+                            data: quantities,
+                            backgroundColor: 'rgba(75, 192, 192, 0.7)',
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false, // Ensures the chart fits the container
+                        plugins: {
+                            legend: { display: false },
+                            title: {
+                                display: true,
+                                text: 'Top 5 Customers by Quantity Purchased'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+                console.log("Top Customers by Quantity Purchased Chart rendered successfully.");
+            } catch (error) {
+                console.error("Error rendering Top Customers by Quantity Chart:", error);
+            }
+        }
+
+        // Function to fetch and render Top Products Chart
+        async function renderTopProductsChart() {
+            try {
+                console.log("Fetching Top Products...");
+                const response = await fetch('/api/top-products/');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                const labels = data.map(item => `Product ${item.product_id}`);
+                const quantities = data.map(item => item.total_quantity_sold);
+
+                const ctx = document.getElementById('topProductsChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Total Quantity Sold',
+                            data: quantities,
+                            backgroundColor: [
+                                'rgba(255, 99, 132, 0.7)',
+                                'rgba(54, 162, 235, 0.7)',
+                                'rgba(255, 206, 86, 0.7)',
+                                'rgba(75, 192, 192, 0.7)',
+                                'rgba(153, 102, 255, 0.7)'
+                            ],
+                            borderColor: [
+                                'rgba(255, 99, 132, 1)',
+                                'rgba(54, 162, 235, 1)',
+                                'rgba(255, 206, 86, 1)',
+                                'rgba(75, 192, 192, 1)',
+                                'rgba(153, 102, 255, 1)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false, // Ensures the chart fits the container
+                        plugins: {
+                            legend: { position: 'right' },
+                            title: {
+                                display: true,
+                                text: 'Top 5 Best-Selling Products'
+                            }
+                        }
+                    }
+                });
+                console.log("Top Products Chart rendered successfully.");
+            } catch (error) {
+                console.error("Error rendering Top Products Chart:", error);
+            }
+        }
+
+        // Function to fetch and render Top Products by Revenue Chart
+        async function renderTopProductsByRevenueChart() {
+            try {
+                console.log("Fetching Top Products by Revenue...");
+                const response = await fetch('/api/top-products-by-revenue/');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                const labels = data.map(item => `Product ${item.product_id}`);
+                const revenues = data.map(item => item.total_revenue);
+
+                const ctx = document.getElementById('topProductsByRevenueChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Total Revenue ($)',
+                            data: revenues,
+                            backgroundColor: 'rgba(153, 102, 255, 0.7)',
+                            borderColor: 'rgba(153, 102, 255, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false, // Ensures the chart fits the container
+                        plugins: {
+                            legend: { display: false },
+                            title: {
+                                display: true,
+                                text: 'Top 5 Products by Revenue'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+                console.log("Top Products by Revenue Chart rendered successfully.");
+            } catch (error) {
+                console.error("Error rendering Top Products by Revenue Chart:", error);
+            }
+        }
+
+        // Function to fetch and render Monthly Revenue Chart
+        async function renderMonthlyRevenueChart() {
+            try {
+                console.log("Fetching Monthly Revenue...");
+                const response = await fetch('/api/monthly-revenue/');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+
+                const labels = data.map(item => item.month);
+                const revenues = data.map(item => item.total_revenue);
+
+                const ctx = document.getElementById('monthlyRevenueChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels.reverse(),
+                        datasets: [{
+                            label: 'Total Revenue ($)',
+                            data: revenues.reverse(),
+                            backgroundColor: 'rgba(255, 159, 64, 0.7)',
+                            borderColor: 'rgba(255, 159, 64, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false, // Ensures the chart fits the container
+                        plugins: {
+                            legend: { display: false },
+                            title: {
+                                display: true,
+                                text: 'Monthly Revenue'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+                console.log("Monthly Revenue Chart rendered successfully.");
+            } catch (error) {
+                console.error("Error rendering Monthly Revenue Chart:", error);
+            }
+        }
+
+        // Function to format text with standard Markdown using Marked.js
+        function formatText(content) {
+            if (!content) return '';
+
+            // Convert Markdown to HTML using Marked.js
+            let htmlContent = marked.parse(content);
+            console.log("Converted Markdown to HTML:", htmlContent);
+
+            // Sanitize the HTML using DOMPurify
+            htmlContent = DOMPurify.sanitize(htmlContent);
+            console.log("Sanitized HTML Content:", htmlContent);
+
+            return htmlContent;
+        }
+
+        // Function to fetch and display Quick Insights
+        async function fetchQuickInsights() {
+            console.log("Initiating fetchQuickInsights...");
+            const modalElement = document.getElementById('quickInsightsModal');
+            const modal = new bootstrap.Modal(modalElement);
+            const loadingDiv = document.getElementById('quickInsightsLoading');
+            const contentDiv = document.getElementById('quickInsightsContent');
+
+            // Show the modal with the loading spinner
+            console.log("Displaying modal with loading spinner.");
+            loadingDiv.classList.remove('d-none');
+            contentDiv.classList.add('d-none');
+            modal.show();
+
+            try {
+                console.log("Fetching Quick Insights from API...");
+                const response = await fetch('/api/quick-insights/');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                console.log("Received data from API:", data);
+
+                const insightsContent = data.insights || 'No insights available.';
+                console.log("Insights Content:", insightsContent);
+
+                // Format the content using Markdown
+                const formattedContent = formatText(insightsContent);
+                console.log("Formatted Content:", formattedContent);
+
+                // Update the modal content
+                contentDiv.innerHTML = formattedContent;
+                console.log("Updated modal content.");
+
+                // Hide the loading spinner and show the content
+                loadingDiv.classList.add('d-none');
+                contentDiv.classList.remove('d-none');
+                console.log("Hid loading spinner and displayed content.");
+            } catch (error) {
+                console.error('Error fetching quick insights:', error);
+                contentDiv.innerHTML = '<span class="text-danger">An error occurred while fetching insights.</span>';
+
+                // Hide the loading spinner and show the error message
+                loadingDiv.classList.add('d-none');
+                contentDiv.classList.remove('d-none');
+                console.log("Hid loading spinner and displayed error message.");
+            }
+        }
+
+        // Add event listener to the Quick Insights button
+        document.getElementById('quickInsightsBtn').addEventListener('click', fetchQuickInsights);
+
+        // Initialize all charts on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("Initializing charts...");
+            renderTopCustomersChart();
+            renderTopCustomersByQuantityChart();
+            renderTopProductsChart();
+            renderTopProductsByRevenueChart();
+            renderMonthlyRevenueChart();
+        });
+    </script>
+</body>
+</html>

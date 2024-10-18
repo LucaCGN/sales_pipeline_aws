@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+luigi
+pandas
+Jinja2
